@@ -58,18 +58,29 @@ async function generateCaption() {
   generateCaptionBtn.disabled = true;
   btnText.classList.add('hidden');
   btnSpinner.classList.remove('hidden');
+  captionInput.value = "";
 
   try {
-    const base64ImageData = userImage.src.split(',')[1];
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    const MAX_WIDTH_FOR_API = 512;
+
+    const aspectRatio = userImage.width / userImage.height;
+    tempCanvas.width = MAX_WIDTH_FOR_API;
+    tempCanvas.height = MAX_WIDTH_FOR_API / aspectRatio;
+
+    tempCtx.drawImage(userImage, 0, 0, tempCanvas.width, tempCanvas.height);
+    const resizedImageData = tempCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
     const languageSelect = document.getElementById('language-select');
     const selectedLang = languageSelect.value;
-
+    
     const response = await fetch('/api/generate-caption', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        imageData: base64ImageData,
-        mimeType: userImageMimeType || 'image/jpeg',
+        imageData: resizedImageData, 
+        mimeType: 'image/jpeg', 
         language: selectedLang,
       })
     });
@@ -78,19 +89,38 @@ async function generateCaption() {
       throw new Error(`Request to our server failed with status ${response.status}`);
     }
 
-    const result = await response.json();
-    const caption = result.caption;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let partialChunk = '';
 
-    if (caption) {
-      captionInput.value = caption;
-      createPolaroid();
-    } else {
-      throw new Error("Could not get caption from our server.");
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        partialChunk += decoder.decode(value, { stream: true });
+        
+        const lines = partialChunk.split('\n');
+        partialChunk = lines.pop(); 
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const jsonStr = line.substring(6).trim();
+                if (jsonStr) { 
+                    try {
+                        const parsed = JSON.parse(jsonStr);
+                        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                        captionInput.value += text;
+                        createPolaroid();
+                    } catch (e) {
+                    }
+                }
+            }
+        }
     }
 
   } catch (error) {
     console.error("Error generating caption:", error);
-    captionInput.value = "Maaf, tidak bisa mendapatkan saran.";
+    captionInput.value = "Maaf, terjadi kesalahan.";
   } finally {
     generateCaptionBtn.disabled = false;
     btnText.classList.remove('hidden');
