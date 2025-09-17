@@ -56,7 +56,10 @@ noiseSlider.addEventListener('input', () => {
     }
 });
 
-downloadBtn.addEventListener('click', generateAndDownloadHighQualityPolaroid);
+downloadBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    generateAndDownloadHighQualityPolaroid();
+});
 
 generateCaptionBtn.addEventListener('click', generateCaption);
 
@@ -110,7 +113,7 @@ async function generateCaption() {
                         const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
                         captionInput.value += text;
                         renderPreviewPolaroid();
-                    } catch (e) {}
+                    } catch (e) { }
                 }
             }
         }
@@ -163,7 +166,7 @@ function renderPreviewPolaroid() {
   ctx.drawImage(filteredImageCanvas, borderSide, borderTop, imgWidth, imgHeight);
   const captionText = captionInput.value;
   if (captionText) {
-    drawCaption(ctx, captionText, frameWidth, imgHeight, borderTop, borderBottom);
+    drawCaption(ctx, captionText, frameWidth, imgHeight, borderTop, borderBottom, borderSide);
   }
   resultContainer.classList.remove('hidden');
   infoMessage.classList.add('hidden');
@@ -182,8 +185,10 @@ function generateAndDownloadHighQualityPolaroid() {
     const frameHeight = imgHeight + borderTop + borderBottom;
     downloadCanvas.width = frameWidth;
     downloadCanvas.height = frameHeight;
+    
     downloadCtx.fillStyle = '#fefefe';
     downloadCtx.fillRect(0, 0, frameWidth, frameHeight);
+
     const tempImageCanvas = document.createElement('canvas');
     const tempImageCtx = tempImageCanvas.getContext('2d');
     tempImageCanvas.width = imgWidth;
@@ -194,11 +199,14 @@ function generateAndDownloadHighQualityPolaroid() {
     const noise = parseInt(noiseSlider.value, 10);
     applyPixelFilters(imageData, filter, noise);
     tempImageCtx.putImageData(imageData, 0, 0);
+
     downloadCtx.drawImage(tempImageCanvas, borderSide, borderTop, imgWidth, imgHeight);
+    
     const captionText = captionInput.value;
     if (captionText) {
-      drawCaption(downloadCtx, captionText, frameWidth, imgHeight, borderTop, borderBottom);
+      drawCaption(downloadCtx, captionText, frameWidth, imgHeight, borderTop, borderBottom, borderSide);
     }
+
     const link = document.createElement('a');
     link.download = 'polaroid.png';
     link.href = downloadCanvas.toDataURL('image/png');
@@ -238,7 +246,7 @@ function applyPixelFilters(imageData, filter, noise) {
     }
 }
 
-function drawCaption(ctx, captionText, frameWidth, imgHeight, borderTop, borderBottom) {
+function drawCaption(ctx, captionText, frameWidth, imgHeight, borderTop, borderBottom, borderSide) {
     ctx.fillStyle = '#333';
     ctx.textAlign = 'center';
     const textX = frameWidth / 2;
@@ -246,6 +254,7 @@ function drawCaption(ctx, captionText, frameWidth, imgHeight, borderTop, borderB
     const boxWidth = frameWidth - (borderSide * 2);
     const boxHeight = borderBottom * 0.7;
     let fontSize = Math.min(boxHeight, 160);
+
     while (fontSize > 10) {
         ctx.font = `${fontSize}px 'Caveat', cursive`;
         const lineHeight = fontSize * 0.95;
@@ -263,17 +272,35 @@ function drawCaption(ctx, captionText, frameWidth, imgHeight, borderTop, borderB
 }
 
 function getWrappedLines(context, text, maxWidth) {
-  const words = text.split(' ');
-  const lines = [];
-  let currentLine = '';
-  for (const word of words) {
-    const testLine = currentLine ? currentLine + ' ' + word : word;
-    const metrics = context.measureText(testLine);
-    if (metrics.width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else { currentLine = testLine; }
-  }
-  if (currentLine) { lines.push(currentLine); }
-  return lines;
+    const lines = [];
+    const words = text.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+        let testLine = currentLine ? currentLine + ' ' + word : word;
+        
+        if (context.measureText(testLine).width > maxWidth) {
+            if (currentLine) {
+                lines.push(currentLine);
+            }
+            
+            let tempWord = '';
+            for (const char of word) {
+                if (context.measureText(tempWord + char).width > maxWidth) {
+                    lines.push(tempWord);
+                    tempWord = char;
+                } else {
+                    tempWord += char;
+                }
+            }
+            currentLine = tempWord;
+        } else {
+            currentLine = testLine;
+        }
+    }
+
+    if (currentLine) {
+        lines.push(currentLine);
+    }
+    return lines;
 }
