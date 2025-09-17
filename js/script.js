@@ -13,6 +13,7 @@ const ctx = canvas.getContext('2d');
 
 let userImage = null;
 let userImageMimeType = null;
+let filteredImageCanvas = null;
 
 imageUpload.addEventListener('change', (e) => {
   if (e.target.files && e.target.files[0]) {
@@ -23,7 +24,8 @@ imageUpload.addEventListener('change', (e) => {
       userImage = new Image();
       userImage.onload = () => {
         infoMessage.innerHTML = `<p class="text-green-600">Image loaded. Ready to customize!</p>`;
-        createPolaroid();
+        applyFilterAndNoiseToOffscreenCanvas();
+        renderPolaroid();
         generateCaptionBtn.disabled = false;
       };
       userImage.src = event.target.result;
@@ -39,12 +41,23 @@ imageUpload.addEventListener('change', (e) => {
   }
 });
 
-captionInput.addEventListener('input', () => { if (userImage) createPolaroid(); });
-filterSelect.addEventListener('change', () => { if (userImage) createPolaroid(); });
-noiseSlider.addEventListener('input', () => { if (userImage) createPolaroid(); });
+captionInput.addEventListener('input', () => { if (userImage) renderPolaroid(); });
+
+filterSelect.addEventListener('change', () => {
+    if (userImage) {
+        applyFilterAndNoiseToOffscreenCanvas();
+        renderPolaroid();
+    }
+});
+noiseSlider.addEventListener('input', () => {
+    if (userImage) {
+        applyFilterAndNoiseToOffscreenCanvas();
+        renderPolaroid();
+    }
+});
 
 downloadBtn.addEventListener('click', () => {
-  createPolaroid(2.5);
+  renderPolaroid(2.5);
   downloadBtn.href = canvas.toDataURL('image/png');
 });
 
@@ -58,7 +71,7 @@ async function generateCaption() {
   generateCaptionBtn.disabled = true;
   btnText.classList.add('hidden');
   btnSpinner.classList.remove('hidden');
-  captionInput.value = "";
+  captionInput.value = ""; 
 
   try {
     const tempCanvas = document.createElement('canvas');
@@ -110,14 +123,12 @@ async function generateCaption() {
                         const parsed = JSON.parse(jsonStr);
                         const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
                         captionInput.value += text;
-                        createPolaroid();
-                    } catch (e) {
-                    }
+                        renderPolaroid();
+                    } catch (e) {}
                 }
             }
         }
     }
-
   } catch (error) {
     console.error("Error generating caption:", error);
     captionInput.value = "Maaf, terjadi kesalahan.";
@@ -128,13 +139,78 @@ async function generateCaption() {
   }
 }
 
-function createPolaroid(scale = 1) {
-  if (!userImage) return;
+function applyFilterAndNoiseToOffscreenCanvas() {
+    if (!userImage) return;
 
-  const aspectRatio = userImage.width / userImage.height;
-  const imgMaxWidth = 350;
-  const imgWidth = Math.min(imgMaxWidth, userImage.width);
-  const imgHeight = imgWidth / aspectRatio;
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+
+    const aspectRatio = userImage.width / userImage.height;
+    const imgMaxWidth = 350;
+    const imgWidth = Math.min(imgMaxWidth, userImage.width);
+    const imgHeight = imgWidth / aspectRatio;
+    offscreenCanvas.width = imgWidth;
+    offscreenCanvas.height = imgHeight;
+
+    offscreenCtx.drawImage(userImage, 0, 0, imgWidth, imgHeight);
+
+    const filter = filterSelect.value;
+    const noise = parseInt(noiseSlider.value, 10);
+
+    if (filter === 'none' && noise === 0) {
+        filteredImageCanvas = offscreenCanvas;
+        return;
+    }
+
+    const imageData = offscreenCtx.getImageData(0, 0, imgWidth, imgHeight);
+    const data = imageData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+
+        switch (filter) {
+            case 'classic':
+                r *= 1.1; g *= 1.1; b *= 1.05;
+                const classic_sepia = (r * 0.393) + (g * 0.769) + (b * 0.189);
+                r = classic_sepia * 0.1 + r * 0.9;
+                g = classic_sepia * 0.1 + g * 0.9;
+                b = classic_sepia * 0.1 + b * 0.9;
+                break;
+            case 'vintage':
+                const vintage_r = (r * 0.393) + (g * 0.769) + (b * 0.189);
+                const vintage_g = (r * 0.349) + (g * 0.686) + (b * 0.168);
+                const vintage_b = (r * 0.272) + (g * 0.534) + (b * 0.131);
+                r = vintage_r * 0.4 + r * 0.6; g = vintage_g * 0.4 + g * 0.6; b = vintage_b * 0.4 + b * 0.6;
+                g *= 1.1;
+                break;
+            case 'bw':
+                const gray = r * 0.299 + g * 0.587 + b * 0.114;
+                r = g = b = gray * 1.1;
+                break;
+            case 'vibrant':
+                 r *= 1.4; g *= 1.4; b *= 1.2;
+                 break;
+        }
+
+        if (noise > 0) {
+            const noiseVal = (Math.random() - 0.5) * noise;
+            r += noiseVal; g += noiseVal; b += noiseVal;
+        }
+
+        data[i] = Math.max(0, Math.min(255, r));
+        data[i+1] = Math.max(0, Math.min(255, g));
+        data[i+2] = Math.max(0, Math.min(255, b));
+    }
+    offscreenCtx.putImageData(imageData, 0, 0);
+    
+    filteredImageCanvas = offscreenCanvas;
+}
+
+function renderPolaroid(scale = 1) {
+  if (!userImage || !filteredImageCanvas) return;
+
+  const imgWidth = filteredImageCanvas.width;
+  const imgHeight = filteredImageCanvas.height;
 
   const borderTop = 20, borderSide = 20, borderBottom = 90;
   const frameWidth = imgWidth + borderSide * 2;
@@ -151,14 +227,7 @@ function createPolaroid(scale = 1) {
   ctx.fillRect(0, 0, frameWidth, frameHeight);
   ctx.shadowColor = 'transparent';
 
-  applyFilter(filterSelect.value);
-  ctx.drawImage(userImage, borderSide, borderTop, imgWidth, imgHeight);
-  ctx.filter = 'none';
-
-  const noiseValue = parseInt(noiseSlider.value, 10);
-  if (noiseValue > 0) {
-    applyNoise(noiseValue);
-  }
+  ctx.drawImage(filteredImageCanvas, borderSide, borderTop, imgWidth, imgHeight);
 
   const captionText = captionInput.value;
   if (captionText) {
@@ -168,7 +237,6 @@ function createPolaroid(scale = 1) {
     const boxY = imgHeight + borderTop + 15;
     const boxWidth = frameWidth - 40;
     const boxHeight = borderBottom - 25;
-
     fitAndDrawText(ctx, captionText, textX, boxY, boxWidth, boxHeight);
   }
 
@@ -180,31 +248,8 @@ function createPolaroid(scale = 1) {
   }
 }
 
-function applyFilter(filterValue) {
-  switch (filterValue) {
-    case 'classic': ctx.filter = 'saturate(1.1) contrast(1.1) brightness(1.05) sepia(0.1)'; break;
-    case 'vintage': ctx.filter = 'sepia(0.4) saturate(1.2) contrast(0.85) brightness(1.05)'; break;
-    case 'bw': ctx.filter = 'grayscale(1) contrast(1.1)'; break;
-    case 'vibrant': ctx.filter = 'saturate(1.5) contrast(1.2)'; break;
-    default: ctx.filter = 'none'; break;
-  }
-}
-
-function applyNoise(intensity) {
-  const width = canvas.width;
-  const height = canvas.height;
-  const imageData = ctx.getImageData(0, 0, width, height);
-  const data = imageData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    const noise = (Math.random() - 0.5) * intensity;
-    data[i] += noise; data[i + 1] += noise; data[i + 2] += noise;
-  }
-  ctx.putImageData(imageData, 0, 0);
-}
-
 function fitAndDrawText(context, text, x, y, maxWidth, maxHeight) {
   let fontSize = 40;
-
   while (fontSize > 10) {
     context.font = `${fontSize}px 'Caveat', cursive`;
     const lineHeight = fontSize * 0.95;
@@ -218,7 +263,6 @@ function fitAndDrawText(context, text, x, y, maxWidth, maxHeight) {
       }
       return;
     }
-
     fontSize--;
   }
 
